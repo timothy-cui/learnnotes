@@ -71,7 +71,7 @@
     </dependencies>
 </dependencyManagement>
 ```
-* 本文实操github代码库：
+* [本文实操github代码库](https://github.com/timothy-cui/find_source_code)
 ***
 ## 一，Spring Cloud Config
 * 基于云的微服务开发强调以下几点：
@@ -162,7 +162,7 @@ public class Application {
     }
 }
 ```
-* 保护敏感配置信息
+* 保护敏感配置信息[*未实现*]
    * 下载并安装加密所需的Oracle JCE jar；
    * 创建加密密匙；
    * 加密和解密属性；
