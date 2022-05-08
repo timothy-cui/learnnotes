@@ -5,7 +5,7 @@
    * 二，Spring Eureka : 用于定位应用程序资源的物理位置；
    * 三，Spring Cloud 和 Netflix Hystrix : 实现客户端弹性模式，在远程服务发生错误或者表现不佳时保护远程资源的客户端免于崩溃；
    * 四，Spring Cloud 和 Zuul : 实现服务网关，充当服务客户端和被调用的服务之间的中介；
-   * 五，Spring Cloud 和 Oauth2 : 用于保护微服务，实现令牌机制；
+   * 五，Spring Cloud 和 OAuth2  : 用于保护微服务，实现令牌机制；
    * 六，Spring Cloud Stream : 用于实现事件驱动；
    * 七，Spring Cloud Sleuth 和 Zipkin : 用于关联微服务之间的调用，实现日志聚合，进行分布式跟踪。
 ***
@@ -831,3 +831,1502 @@ public class ThreadLocalConfiguration {
         }
 }
 ```
+***
+## 四，Spring Cloud 和 Zuul
+* 什么是服务网关？
+   * 其充当服务客户端和被调用的服务之间的中介。有了服务网关，服务客户端永远不会直接调用单个服务的url，而是将所有的调用都放到服务网关上。
+   * 由于服务网关位于客户端和各个服务的所有调用之间，故其还充当服务调用的中央策略执行点，可实现横切关注点，主要有以下几个方面：
+      * 静态路由：服务网关将所有的服务调用放置在单个url和api路由的后面：
+      * 动态路由：服务网关可以检查传入的服务请求，根据来自传入请求的数据和服务调用者的身份执行智能路由；
+      * 验证和授权：其天然是检查服务调用者是否已经进行了验证并被授权进行服务调用的场所；
+      * 度量数据收集和日志记录：可以通过服务网关来收集数据和日志信息，还可使用服务网关确保在用户请求上提供关键信息以确保日志统一。
+* zuul的功能：
+   * 将应用程序的所有服务的路由映射到一个URL；
+   * 构建可以对通过网关的请求进行检查和操作的过滤器。
+### 构建zuul服务
+* 引入依赖
+```
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-netflix-zuul</artifactId>
+</dependency>
+```
+* 引导类
+```
+@SpringBootApplication
+@EnableZuulProxy
+public class ZuulServerApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(ZuulServerApplication.class, args);
+    }
+}
+```
+* 配置Zuul与Eureka通信【application.yml文件设置】
+   * Zuul通过Eureka进行服务查找，通过Ribbon对来自Zuul的请求进行客户端负载均衡。
+```
+server:
+  port: 5555
+
+# http://localhost:5555/actuator/routes 访问服务映射表[其默认不暴露，故进行以下配置]
+management:
+  endpoints:
+    web:
+      exposure:
+        include: routes
+
+eureka:
+  instance:
+    preferIpAddress: true
+  client:
+    registerWithEureka: true
+    fetchRegistry: true
+    serviceUrl:
+        defaultZone: http://localhost:8761/eureka/
+```
+* 在Zuul中配置路由
+   * 通过Eureka服务发现自动映射；
+   * 使用服务发现手动配置【application.yml文件设置】；
+```
+# 手动映射配置【自动映射的路由需要手动配置去除，ignored-service: 'organizationservice', 加前缀，prefix:  /api】
+#zuul:
+#  prefix:  /api
+#  ignored-service: 'organizationservice'
+#  routes:
+#    organizationservice: /organization/**
+#    licensingservice: /licensing/**
+```
+ * * 可将配置放入spring cloud config，然后进行动态配置刷新。
+ * 可通过配置对通过zuul进行服务调用设置超时属性。
+ * Zuul的过滤器：前置过滤器、后置过滤器、路由过滤器
+   * 构建一个生成关联ID的前置过滤器,配合UserContextFilter与UserContextInterceptor完成关联ID的传递；
+```
+ package com.thoughtmechanix.zuulsvr.filters;
+
+import com.netflix.zuul.context.RequestContext;
+import org.springframework.stereotype.Component;
+
+@Component
+public class FilterUtils {
+
+    public static final String CORRELATION_ID = "tmx-correlation-id";
+    public static final String AUTH_TOKEN = "tmx-auth-token";
+    public static final String USER_ID = "tmx-user-id";
+    public static final String ORG_ID = "tmx-org-id";
+    public static final String PRE_FILTER_TYPE = "pre";
+    public static final String POST_FILTER_TYPE = "post";
+    public static final String ROUTE_FILTER_TYPE = "route";
+
+    public String getCorrelationId() {
+        RequestContext ctx = RequestContext.getCurrentContext();
+
+        if (ctx.getRequest().getHeader(CORRELATION_ID) != null) {
+            return ctx.getRequest().getHeader(CORRELATION_ID);
+        } else {
+            return ctx.getZuulRequestHeaders().get(CORRELATION_ID);
+        }
+    }
+
+    public void setCorrelationId(String correlationId) {
+        RequestContext ctx = RequestContext.getCurrentContext();
+        // 单独的http首部映射，调用目标服务时会被合并
+        ctx.addZuulRequestHeader(CORRELATION_ID, correlationId);
+    }
+
+    public final String getOrgId() {
+        RequestContext ctx = RequestContext.getCurrentContext();
+        if (ctx.getRequest().getHeader(ORG_ID) != null) {
+            return ctx.getRequest().getHeader(ORG_ID);
+        } else {
+            return ctx.getZuulRequestHeaders().get(ORG_ID);
+        }
+    }
+
+    public void setOrgId(String orgId) {
+        RequestContext ctx = RequestContext.getCurrentContext();
+        ctx.addZuulRequestHeader(ORG_ID, orgId);
+    }
+
+    public final String getUserId() {
+        RequestContext ctx = RequestContext.getCurrentContext();
+        if (ctx.getRequest().getHeader(USER_ID) != null) {
+            return ctx.getRequest().getHeader(USER_ID);
+        } else {
+            return ctx.getZuulRequestHeaders().get(USER_ID);
+        }
+    }
+
+    public void setUserId(String userId) {
+        RequestContext ctx = RequestContext.getCurrentContext();
+        ctx.addZuulRequestHeader(USER_ID, userId);
+    }
+
+    public final String getAuthToken() {
+        RequestContext ctx = RequestContext.getCurrentContext();
+        return ctx.getRequest().getHeader(AUTH_TOKEN);
+    }
+
+    public String getServiceId() {
+        RequestContext ctx = RequestContext.getCurrentContext();
+
+        //We might not have a service id if we are using a static, non-eureka route.
+        if (ctx.get("serviceId") == null) return "";
+        return ctx.get("serviceId").toString();
+    }
+
+
+}
+
+```
+```
+ package com.thoughtmechanix.zuulsvr.filters;
+
+import com.netflix.zuul.ZuulFilter;
+import com.netflix.zuul.context.RequestContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+/*
+ * 所有的zuul过滤器必须扩展ZuulFilter类，并覆盖4个方法
+ */
+@Component
+public class TrackingFilter extends ZuulFilter{
+    private static final int      FILTER_ORDER =  1;
+    private static final boolean  SHOULD_FILTER=true;
+    private static final Logger logger = LoggerFactory.getLogger(TrackingFilter.class);
+
+    @Autowired
+    FilterUtils filterUtils;
+
+    // 设置过滤器类型
+    @Override
+    public String filterType() {
+        return FilterUtils.PRE_FILTER_TYPE;
+    }
+
+    // 设置过滤器执行顺序
+    @Override
+    public int filterOrder() {
+        return FILTER_ORDER;
+    }
+
+    // 设置过滤器是否执行
+    @Override
+    public boolean shouldFilter() {
+        return SHOULD_FILTER;
+    }
+
+    // 每次服务通过过滤器时所执行的代码
+    @Override
+    public Object run() {
+
+        if (isCorrelationIdPresent()) {
+           logger.debug("tmx-correlation-id found in tracking filter: {}. ", filterUtils.getCorrelationId());
+        }
+        else{
+            filterUtils.setCorrelationId(generateCorrelationId());
+            logger.debug("tmx-correlation-id generated in tracking filter: {}.", filterUtils.getCorrelationId());
+        }
+
+        RequestContext ctx = RequestContext.getCurrentContext();
+        logger.debug("Processing incoming request for {}.",  ctx.getRequest().getRequestURI());
+        return null;
+    }
+
+    private boolean isCorrelationIdPresent(){
+        if (filterUtils.getCorrelationId() !=null){
+            return true;
+        }
+
+        return false;
+    }
+
+    // 生成CorrelationId
+    private String generateCorrelationId(){
+        return java.util.UUID.randomUUID().toString();
+    }
+}
+```
+```
+package com.thoughtmechanix.zuulsvr.config;
+
+import com.thoughtmechanix.zuulsvr.utils.UserContextInterceptor;
+import org.springframework.cloud.client.loadbalancer.LoadBalanced;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestTemplate;
+
+import java.util.Collections;
+import java.util.List;
+
+@Configuration
+public class ConfigBeans {
+    @Bean
+    @LoadBalanced
+    RestTemplate restTemplate(){
+        RestTemplate template = new RestTemplate();
+        List interceptors = template.getInterceptors();
+        if (interceptors == null) {
+            template.setInterceptors(Collections.singletonList(new UserContextInterceptor()));
+        } else {
+            interceptors.add(new UserContextInterceptor());
+            template.setInterceptors(interceptors);
+        }
+
+        return template;
+    }
+
+```
+```
+package com.thoughtmechanix.zuulsvr.utils;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import javax.servlet.*;
+import javax.servlet.http.HttpServletRequest;
+import java.io.IOException;
+
+@Component
+public class UserContextFilter implements Filter {
+    private static final Logger logger = LoggerFactory.getLogger(UserContextFilter.class);
+
+    @Override
+    public void doFilter(ServletRequest servletRequest, ServletResponse servletResponse, FilterChain filterChain)
+            throws IOException, ServletException {
+        HttpServletRequest httpServletRequest = (HttpServletRequest) servletRequest;
+
+        UserContextHolder.getContext().setCorrelationId(httpServletRequest.getHeader(UserContext.CORRELATION_ID));
+        UserContextHolder.getContext().setUserId(httpServletRequest.getHeader(UserContext.USER_ID));
+        UserContextHolder.getContext().setAuthToken(httpServletRequest.getHeader(UserContext.AUTH_TOKEN));
+        UserContextHolder.getContext().setOrgId(httpServletRequest.getHeader(UserContext.ORG_ID));
+
+        logger.info("Special Routes Service Incoming Correlation id: {}", UserContextHolder.getContext().getCorrelationId());
+
+        filterChain.doFilter(httpServletRequest, servletResponse);
+    }
+
+    @Override
+    public void init(FilterConfig filterConfig) throws ServletException {
+    }
+
+    @Override
+    public void destroy() {
+    }
+}
+```
+```
+package com.thoughtmechanix.zuulsvr.utils;
+
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpRequest;
+import org.springframework.http.client.ClientHttpRequestExecution;
+import org.springframework.http.client.ClientHttpRequestInterceptor;
+import org.springframework.http.client.ClientHttpResponse;
+
+import java.io.IOException;
+
+public class UserContextInterceptor implements ClientHttpRequestInterceptor {
+    @Override
+    public ClientHttpResponse intercept(
+            HttpRequest request, byte[] body, ClientHttpRequestExecution execution)
+            throws IOException {
+
+        HttpHeaders headers = request.getHeaders();
+        headers.add(UserContext.CORRELATION_ID, UserContextHolder.getContext().getCorrelationId());
+        headers.add(UserContext.AUTH_TOKEN, UserContextHolder.getContext().getAuthToken());
+
+        return execution.execute(request, body);
+    }
+}
+```
+```
+package com.thoughtmechanix.zuulsvr.utils;
+
+import org.springframework.stereotype.Component;
+
+@Component
+public class UserContext {
+    public static final String CORRELATION_ID = "tmx-correlation-id";
+    public static final String AUTH_TOKEN     = "tmx-auth-token";
+    public static final String USER_ID        = "tmx-user-id";
+    public static final String ORG_ID         = "tmx-org-id";
+
+    private String correlationId= new String();
+    private String authToken= new String();
+    private String userId = new String();
+    private String orgId = new String();
+
+    public String getCorrelationId() { return correlationId;}
+    public void setCorrelationId(String correlationId) {
+        this.correlationId = correlationId;
+    }
+
+    public String getAuthToken() {
+        return authToken;
+    }
+
+    public void setAuthToken(String authToken) {
+        this.authToken = authToken;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
+    }
+
+    public String getOrgId() {
+        return orgId;
+    }
+
+    public void setOrgId(String orgId) {
+        this.orgId = orgId;
+    }
+
+}
+```
+```
+package com.thoughtmechanix.zuulsvr.utils;
+
+
+import org.springframework.util.Assert;
+
+public class UserContextHolder {
+    private static final ThreadLocal<UserContext> userContext = new ThreadLocal<UserContext>();
+
+    public static final UserContext getContext(){
+        UserContext context = userContext.get();
+
+        if (context == null) {
+            context = createEmptyContext();
+            userContext.set(context);
+
+        }
+        return userContext.get();
+    }
+
+    public static final void setContext(UserContext context) {
+        Assert.notNull(context, "Only non-null UserContext instances are permitted");
+        userContext.set(context);
+    }
+
+    public static final UserContext createEmptyContext(){
+        return new UserContext();
+    }
+}
+```
+* 构建接受关联ID的后置过滤器
+```
+package com.thoughtmechanix.zuulsvr.filters;
+
+import brave.Tracer;
+import com.netflix.zuul.ZuulFilter;
+import com.netflix.zuul.context.RequestContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+@Component
+public class ResponseFilter extends ZuulFilter{
+    private static final int  FILTER_ORDER=1;
+    private static final boolean  SHOULD_FILTER=true;
+    private static final Logger logger = LoggerFactory.getLogger(ResponseFilter.class);
+
+    @Autowired
+    Tracer tracer;
+    
+    @Autowired
+    FilterUtils filterUtils;
+
+    @Override
+    public String filterType() {
+        return FilterUtils.POST_FILTER_TYPE;
+    }
+
+    @Override
+    public int filterOrder() {
+        return FILTER_ORDER;
+    }
+
+    @Override
+    public boolean shouldFilter() {
+        return SHOULD_FILTER;
+    }
+
+    @Override
+    public Object run() {
+        RequestContext ctx = RequestContext.getCurrentContext();
+
+        logger.info("Adding the correlation id to the outbound headers. {}", filterUtils.getCorrelationId());
+        ctx.getResponse().addHeader(FilterUtils.CORRELATION_ID, filterUtils.getCorrelationId());
+
+        // 通过sleuth获取tracerId返回到response中。
+        ctx.getResponse().addHeader("tmx-correlation-id", tracer.currentSpan().context().traceIdString());
+
+        logger.info("Completing outgoing request for {}.", ctx.getRequest().getRequestURI());
+
+        return null;
+    }
+}
+```
+* 构建路由过滤器
+```
+package com.thoughtmechanix.zuulsvr.filters;
+import ...
+
+@Component
+public class SpecialRoutesFilter extends ZuulFilter {
+    private static final int FILTER_ORDER =  1;
+    private static final boolean SHOULD_FILTER =true;
+
+    @Autowired
+    FilterUtils filterUtils;
+
+    @Autowired
+    RestTemplate restTemplate;
+
+    @Override
+    public String filterType() {
+        return filterUtils.ROUTE_FILTER_TYPE;
+    }
+
+    @Override
+    public int filterOrder() {
+        return FILTER_ORDER;
+    }
+
+    @Override
+    public boolean shouldFilter() {
+        return SHOULD_FILTER;
+    }
+
+
+    @Override
+    public Object run() {
+        RequestContext ctx = RequestContext.getCurrentContext();
+
+        // 执行对specialRoutes服务的调用，以确定该服务id是否有路由记录。
+        AbTestingRoute abTestRoute = getAbRoutingInfo( filterUtils.getServiceId() );
+
+        if (abTestRoute!=null && useSpecialRoute(abTestRoute)) {
+            // 如果有路由记录，构建route到specialRoutes指定的服务
+            String route = buildRouteString(ctx.getRequest().getRequestURI(),
+                    abTestRoute.getEndpoint(),
+                    ctx.get("serviceId").toString());
+            // 完成转发到其他服务的工作
+            forwardToSpecialRoute(route);
+        }
+
+        return null;
+    }
+
+    private ProxyRequestHelper helper = new ProxyRequestHelper();
+
+    private AbTestingRoute getAbRoutingInfo(String serviceName){
+        ResponseEntity<AbTestingRoute> restExchange = null;
+        try {
+            restExchange = restTemplate.exchange(
+                             "http://specialroutesservice/v1/route/abtesting/{serviceName}",
+                             HttpMethod.GET,
+                             null, AbTestingRoute.class, serviceName);
+        }
+        catch(HttpClientErrorException ex){
+            if (ex.getStatusCode()== HttpStatus.NOT_FOUND) return null;
+            throw ex;
+        }
+        return restExchange.getBody();
+    }
+
+    private String buildRouteString(String oldEndpoint, String newEndpoint, String serviceName){
+        int index = oldEndpoint.indexOf(serviceName);
+
+        String strippedRoute = oldEndpoint.substring(index + serviceName.length());
+        System.out.println("Target route: " + String.format("%s/%s", newEndpoint, strippedRoute));
+        return String.format("%s/%s", newEndpoint, strippedRoute);
+    }
+
+    private String getVerb(HttpServletRequest request) {
+        String sMethod = request.getMethod();
+        return sMethod.toUpperCase();
+    }
+
+    private HttpHost getHttpHost(URL host) {
+        HttpHost httpHost = new HttpHost(host.getHost(), host.getPort(),
+                host.getProtocol());
+        return httpHost;
+    }
+
+    private Header[] convertHeaders(MultiValueMap<String, String> headers) {
+        List<Header> list = new ArrayList<>();
+        for (String name : headers.keySet()) {
+            for (String value : headers.get(name)) {
+                list.add(new BasicHeader(name, value));
+            }
+        }
+        return list.toArray(new BasicHeader[0]);
+    }
+
+    private HttpResponse forwardRequest(HttpClient httpclient, HttpHost httpHost,
+                                        HttpRequest httpRequest) throws IOException {
+        return httpclient.execute(httpHost, httpRequest);
+    }
+
+
+    private MultiValueMap<String, String> revertHeaders(Header[] headers) {
+        MultiValueMap<String, String> map = new LinkedMultiValueMap<String, String>();
+        for (Header header : headers) {
+            String name = header.getName();
+            if (!map.containsKey(name)) {
+                map.put(name, new ArrayList<String>());
+            }
+            map.get(name).add(header.getValue());
+        }
+        return map;
+    }
+
+    private InputStream getRequestBody(HttpServletRequest request) {
+        InputStream requestEntity = null;
+        try {
+            requestEntity = request.getInputStream();
+        }
+        catch (IOException ex) {
+            // no requestBody is ok.
+        }
+        return requestEntity;
+    }
+
+    private void setResponse(HttpResponse response) throws IOException {
+        this.helper.setResponse(response.getStatusLine().getStatusCode(),
+                response.getEntity() == null ? null : response.getEntity().getContent(),
+                revertHeaders(response.getAllHeaders()));
+    }
+
+    private HttpResponse forward(HttpClient httpclient, String verb, String uri,
+                                 HttpServletRequest request, MultiValueMap<String, String> headers,
+                                 MultiValueMap<String, String> params, InputStream requestEntity)
+            throws Exception {
+        Map<String, Object> info = this.helper.debug(verb, uri, headers, params,
+                requestEntity);
+        URL host = new URL( uri );
+        HttpHost httpHost = getHttpHost(host);
+
+        HttpRequest httpRequest;
+        int contentLength = request.getContentLength();
+        InputStreamEntity entity = new InputStreamEntity(requestEntity, contentLength,
+                request.getContentType() != null
+                        ? ContentType.create(request.getContentType()) : null);
+        switch (verb.toUpperCase()) {
+            case "POST":
+                HttpPost httpPost = new HttpPost(uri);
+                httpRequest = httpPost;
+                httpPost.setEntity(entity);
+                break;
+            case "PUT":
+                HttpPut httpPut = new HttpPut(uri);
+                httpRequest = httpPut;
+                httpPut.setEntity(entity);
+                break;
+            case "PATCH":
+                HttpPatch httpPatch = new HttpPatch(uri );
+                httpRequest = httpPatch;
+                httpPatch.setEntity(entity);
+                break;
+            default:
+                httpRequest = new BasicHttpRequest(verb, uri);
+
+        }
+        try {
+            httpRequest.setHeaders(convertHeaders(headers));
+            HttpResponse zuulResponse = forwardRequest(httpclient, httpHost, httpRequest);
+
+            return zuulResponse;
+        }
+        finally {
+        }
+    }
+
+    /*
+     * 根据权重，判断是否转发到替代服务
+     */
+    public boolean useSpecialRoute(AbTestingRoute testRoute){
+        Random random = new Random();
+
+        if (testRoute.getActive().equals("N")) return false;
+
+        int value = random.nextInt((10 - 1) + 1) + 1;
+
+        if (testRoute.getWeight()<value) return true;
+
+        return false;
+    }
+
+    private void forwardToSpecialRoute(String route) {
+        RequestContext context = RequestContext.getCurrentContext();
+        HttpServletRequest request = context.getRequest();
+
+        MultiValueMap<String, String> headers = this.helper
+                .buildZuulRequestHeaders(request);
+        MultiValueMap<String, String> params = this.helper
+                .buildZuulRequestQueryParams(request);
+        String verb = getVerb(request);
+        InputStream requestEntity = getRequestBody(request);
+        if (request.getContentLength() < 0) {
+            context.setChunkedRequestBody();
+        }
+
+        this.helper.addIgnoredHeaders();
+        CloseableHttpClient httpClient = null;
+        HttpResponse response = null;
+
+        try {
+            httpClient  = HttpClients.createDefault();
+            response = forward(httpClient, verb, route, request, headers,
+                    params, requestEntity);
+            setResponse(response);
+        }
+        catch (Exception ex ) {
+            ex.printStackTrace();
+
+        }
+        finally{
+            try {
+                httpClient.close();
+            }
+            catch(IOException ex){}
+        }
+    }
+}
+```
+* 与微服务调用相整合，可直接通过与Zuul服务的调用进行具体业务逻辑服务调用。
+***
+## 五，Spring Cloud 和 OAuth2 
+* OAuth2是一个基于令牌的安全验证和授权框架，具有以下四种类型的授权：
+   * 密码；
+   * 客户端凭证；
+   * 授权码；
+   * 隐式。
+### 使用 Spring Cloud 和 OAuth2来保护单个端点
+* OAuth2验证服务的maven依赖
+```
+<!-- 引入oauth2依赖 -->
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-oauth2</artifactId>
+</dependency>
+```
+* 引导类
+```
+package com.thoughtmechanix.authentication;
+import ...
+
+@SpringBootApplication
+@RestController
+@EnableResourceServer
+@EnableAuthorizationServer
+public class Application {
+    @RequestMapping(value = { "/user" }, produces = "application/json")
+    public Map<String, Object> user(OAuth2Authentication user) {
+        Map<String, Object> userInfo = new HashMap<>();
+        userInfo.put("user", user.getUserAuthentication().getPrincipal());
+        userInfo.put("authorities", AuthorityUtils.authorityListToSet(user.getUserAuthentication().getAuthorities()));
+        return userInfo;
+    }
+
+
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+
+
+}
+```
+* 使用OAuth2服务注册客户端应用程序
+```
+package com.thoughtmechanix.authentication.security;
+import ...
+
+@Configuration
+public class OAuth2Config extends AuthorizationServerConfigurerAdapter {
+
+    @Autowired
+    private AuthenticationManager authenticationManager;
+
+    @Autowired
+    private UserDetailsService userDetailsService;
+
+    @Override
+    public void configure(ClientDetailsServiceConfigurer clients) throws Exception {
+        clients.inMemory()
+                .withClient("eagleeye")
+                .secret(new BCryptPasswordEncoder().encode("thisissecret"))
+                .authorizedGrantTypes("refresh_token", "password", "client_credentials")
+                .scopes("webclient", "mobileclient");
+    }
+
+    @Override
+    public void configure(AuthorizationServerEndpointsConfigurer endpoints) throws Exception {
+      endpoints
+        .authenticationManager(authenticationManager)
+        .userDetailsService(userDetailsService);
+    }
+}
+```
+* 配置用于【为了方便，这里基于内存进行配置】
+```java
+package com.thoughtmechanix.authentication.security;
+
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
+import org.springframework.security.config.annotation.web.configuration.WebSecurityConfigurerAdapter;
+import org.springframework.security.core.userdetails.UserDetailsService;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.security.crypto.password.PasswordEncoder;
+
+
+@Configuration
+public class WebSecurityConfigurer extends WebSecurityConfigurerAdapter {
+
+    @Bean
+    PasswordEncoder passwordEncoder(){
+        return new BCryptPasswordEncoder();
+    }
+
+    @Override
+    @Bean
+    public AuthenticationManager authenticationManagerBean() throws Exception {
+        return super.authenticationManagerBean();
+    }
+
+    @Override
+    @Bean
+    public UserDetailsService userDetailsServiceBean() throws Exception {
+        return super.userDetailsServiceBean();
+    }
+
+
+    @Override
+    protected void configure(AuthenticationManagerBuilder auth) throws Exception {
+        auth.inMemoryAuthentication().passwordEncoder(new BCryptPasswordEncoder())
+                .withUser("john.carnell").password(new BCryptPasswordEncoder().encode("password1"))
+                .roles("USER").and()
+                .withUser("william.woodward").password(new BCryptPasswordEncoder().encode("password2"))
+                .roles("USER", "ADMIN");
+    }
+}
+```
+### 使用OAuth2保护目标微服务
+* 向服务中添加依赖
+```xml
+<!-- 引入oauth2依赖 -->
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-oauth2</artifactId>
+</dependency>
+```
+* 配置指向OAuth2验证服务【application.yml】
+```yaml
+security:
+  oauth2:
+    resource:
+      userInfoUri: http://localhost:8901/auth/user
+```
+* 配置引导类
+```java
+/*
+ * @EnableResourceServer 告诉微服务，其是一个受保护的资源。   
+ */
+@SpringBootApplication
+@RefreshScope
+@EnableEurekaClient
+@EnableResourceServer
+public class Application {
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+```
+* 定义谁可以访问【通过特定角色保护起来了】
+```java
+package com.thoughtmechanix.organization.security;
+
+
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.oauth2.config.annotation.web.configuration.ResourceServerConfigurerAdapter;
+
+@Configuration
+public class ResourceServerConfiguration extends ResourceServerConfigurerAdapter {
+
+
+    @Override
+    public void configure(HttpSecurity http) throws Exception{
+        http
+        .authorizeRequests()
+          .antMatchers(HttpMethod.DELETE, "/v1/organizations/**")
+          .hasRole("ADMIN")
+          .anyRequest()
+          .authenticated();
+    }
+}
+```
+* OAuth2令牌的传播
+   * Zuul路由服务配置传播【application.yml】
+```yaml
+# 黑名单，阻止Cookie,Set-Cookie的传播[如果不设置，zuul自动阻止Cookie,Set-Cookie,Authorization的传播]
+zuul:
+  sensitive-headers: Cookie,Set-Cookie
+```
+* * 服务调用时使用OAuth2RestTemplate
+```java
+package com.thoughtmechanix.licenses.config;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.security.oauth2.client.OAuth2ClientContext;
+import org.springframework.security.oauth2.client.OAuth2RestTemplate;
+
+
+@Configuration
+public class ConfigBeans {
+    @Bean
+    public OAuth2RestTemplate oauth2RestTemplate(OAuth2ClientContext oauth2ClientContext,
+                                                 OAuth2ProtectedResourceDetails details) {
+        return new OAuth2RestTemplate(details, oauth2ClientContext);
+    }
+    // ...
+    
+}
+```
+```java
+package com.thoughtmechanix.licenses.clients;
+
+import com.thoughtmechanix.licenses.model.Organization;
+import com.thoughtmechanix.licenses.repository.OrganizationRedisRepository;
+import com.thoughtmechanix.licenses.utils.UserContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.oauth2.client.OAuth2RestTemplate;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
+
+@Component
+public class OrganizationRestTemplateClient {
+
+    // OAuth2RestTemplate为RestTemplate的替代品。可以处理Authorization的传播
+    @Autowired
+    OAuth2RestTemplate restTemplate;
+
+    @Autowired
+    OrganizationRedisRepository orgRedisRepo;
+
+    @Autowired
+    UserContext userContext;
+
+    private static final Logger logger = LoggerFactory.getLogger(OrganizationRestTemplateClient.class);
+    
+
+    public Organization getOrganization(String organizationId){
+
+        // 通过zuul进行路由调用
+        ResponseEntity<Organization> restExchange =
+                restTemplate.exchange(
+                        "http://zuulservice/api/organization/v1/organizations/{organizationId}",
+                        HttpMethod.GET,
+                        null, Organization.class, organizationId);
+
+        /*Save the record from cache*/
+        Organization org = restExchange.getBody();
+
+        return org;
+    }
+}
+```
+* 拓展：使用JWT扩展令牌内容
+### 关于微服务安全的总结
+* 在构建用于生产级别的微服务时，应该围绕以下实践构建微服务安全：
+   * 对所有服务通信使用https/安全套接字层；
+   * 所有服务调用都应通过API网关；
+   * 将服务划分到公共API和私有API；
+   * 通过封锁不需要的网络端口来限制微服务的攻击面。
+***
+## 六，Spring Cloud Stream
+* 实现事件驱动【消息驱动】，基于消息传递的解决方案。
+* 使用消息队列作为中介的好处：
+   * 松耦合；
+   * 耐久性；
+   * 可伸缩性；
+   * 灵活性。
+* 使用消息队列作为中介需要关注的方面：
+   * 消息处理语义；
+   * 消息可见行；
+   * 消息编排。
+* Spring Cloud Stream是一个由注解驱动的框架，其允许开发人员在Spring应用程序中轻松地构建消息发布者和消费者。
+* Spring Cloud Stream架构包括：
+   * 发射器：接收一个pojo，发布到通道；
+   * 通道：对列的一个抽象，与目标队列相关联；队列名称不会在代码中直接使用，通道名称会；
+   * 绑定器：与特定消息平台对话；
+   * 接收器：接收消息并反序列化为pojo，进行处理。
+### 在组织服务中编写消息生产者
+* 引入依赖
+```
+<!--Spring Cloud Stream Dependencies-->
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-stream</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-stream-kafka</artifactId>
+</dependency>
+```
+* 引导类，@EnableBinding绑定消息代理
+```
+@SpringBootApplication
+@RefreshScope
+@EnableEurekaClient
+@EnableResourceServer
+@EnableBinding(Source.class)
+public class Application {
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+}
+```
+* 向消息代理发布消息
+```
+package com.thoughtmechanix.organization.events.source;
+
+import com.thoughtmechanix.organization.events.models.OrganizationChangeModel;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.stream.messaging.Source;
+import org.springframework.messaging.support.MessageBuilder;
+import org.springframework.stereotype.Component;
+import com.thoughtmechanix.organization.utils.UserContext;
+
+
+@Component
+public class SimpleSourceBean {
+    private Source source;
+    @Autowired
+    private UserContext userContext;
+
+    private static final Logger logger = LoggerFactory.getLogger(SimpleSourceBean.class);
+
+    // spring cloud stream将注入一个Source接口，以供服务使用。
+    @Autowired
+    public SimpleSourceBean(Source source) {
+        this.source = source;
+    }
+
+    public void publishOrgChange(String action, String orgId) {
+        logger.info("Sending Kafka message {} for Organization Id: {}", action, orgId);
+        // 将要发布的消息[pojo]。
+        OrganizationChangeModel change = new OrganizationChangeModel(
+                OrganizationChangeModel.class.getTypeName(),
+                action,
+                orgId,
+                userContext.getCorrelationId());
+
+        // 使用Source类中定义的通道的send()方法准备发送消息。
+        source.output().send(MessageBuilder.withPayload(change).build());
+    }
+}
+```
+* 配置用于发布消息的平台以及主题【application.yml】
+```
+spring:
+  cloud:
+    stream:
+      bindings:
+        output: // 映射到output通道
+          destination:  orgChangeTopic   // 消息主题
+          content-type: application/json // 消息格式
+      kafka:
+        binder:
+          zkNodes: localhost  // zookeeper位置
+          brokers: localhost  // kafka位置
+```
+* 在服务中发布消息
+```java
+package com.thoughtmechanix.organization.services;
+
+import com.thoughtmechanix.organization.repository.OrganizationRepository;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Service;
+import com.thoughtmechanix.organization.events.source.SimpleSourceBean;
+import com.thoughtmechanix.organization.model.Organization;
+
+import java.util.UUID;
+
+@Service
+public class OrganizationService {
+    @Autowired
+    private OrganizationRepository orgRepository;
+
+    @Autowired
+    SimpleSourceBean simpleSourceBean;
+
+    public Organization getOrg(String organizationId) {
+        return orgRepository.findById(organizationId).orElse(null);
+    }
+
+    public void saveOrg(Organization org) {
+        org.setId(UUID.randomUUID().toString());
+
+        orgRepository.save(org);
+        simpleSourceBean.publishOrgChange("SAVE", org.getId());
+    }
+
+    public void updateOrg(Organization org) {
+        orgRepository.save(org);
+        simpleSourceBean.publishOrgChange("UPDATE", org.getId());
+
+    }
+
+    public void deleteOrg(String orgId) {
+        orgRepository.deleteById(orgId);
+        simpleSourceBean.publishOrgChange("DELETE", orgId);
+    }
+}
+```
+### 在许可证服务中编写消息消费者实现分布式缓存刷新
+* 引入依赖
+```
+<!--Spring Cloud Stream Dependencies-->
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-stream</artifactId>
+</dependency>
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-stream-kafka</artifactId>
+</dependency>
+
+<!--Spring Data Redis dependencies-->
+<dependency>
+    <groupId>org.springframework.data</groupId>
+    <artifactId>spring-data-redis</artifactId>
+    <version>1.7.4.RELEASE</version>
+</dependency>
+<dependency>
+    <groupId>redis.clients</groupId>
+    <artifactId>jedis</artifactId>
+    <version>2.9.0</version>
+</dependency>
+<dependency>
+    <groupId>org.apache.commons</groupId>
+    <artifactId>commons-pool2</artifactId>
+    <version>2.0</version>
+</dependency>
+```
+* 引导类
+```
+// 省略...
+@EnableBinding(Sink.class)
+public class Application {
+    private static final Logger logger = LoggerFactory.getLogger(Application.class);
+
+    public static void main(String[] args) {
+        SpringApplication.run(Application.class, args);
+    }
+
+    // 每次收到消息，就执行该方法 for test。
+    @StreamListener(Sink.INPUT)
+    public void loggerSink(OrganizationChangeModel orgChange) {
+        logger.debug("Received an event for organization id {}", orgChange.getOrganizationId());
+    }
+}
+```
+* 配置用于发布消息的平台以及主题【application.yml】
+```
+spring:
+  cloud:
+    stream:
+      bindings:
+        inboundOrgChanges: // 自定义的input通道[可用官方的：input]
+          destination: orgChangeTopic
+          content-type: application/json
+          group: licensingGroup         // group属性用于保证服务只处理一次 
+      kafka:
+        binder:
+          zkNodes: localhost
+          brokers: localhost
+```
+* 构建一个redis数据库连接
+```java
+package com.thoughtmechanix.licenses.config;
+
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.client.loadbalancer.LoadBalanced;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.connection.jedis.JedisConnectionFactory;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.security.oauth2.client.OAuth2ClientContext;
+import org.springframework.security.oauth2.client.OAuth2RestTemplate;
+import org.springframework.security.oauth2.client.resource.OAuth2ProtectedResourceDetails;
+import org.springframework.web.client.RestTemplate;
+
+@Configuration
+public class ConfigBeans {
+    @Autowired
+    private ServiceConfig serviceConfig;
+
+    @Bean
+    @LoadBalanced
+    RestTemplate restTemplate() {
+        return new RestTemplate();
+    }
+
+    @Bean
+    public OAuth2RestTemplate oauth2RestTemplate(OAuth2ClientContext oauth2ClientContext,
+                                                 OAuth2ProtectedResourceDetails details) {
+        return new OAuth2RestTemplate(details, oauth2ClientContext);
+    }
+
+    @Bean
+    public JedisConnectionFactory jedisConnectionFactory() {
+        JedisConnectionFactory jedisConnFactory = new JedisConnectionFactory();
+        jedisConnFactory.setHostName(serviceConfig.getRedisServer());
+        jedisConnFactory.setPort(serviceConfig.getRedisPort());
+        return jedisConnFactory;
+    }
+
+    @Bean
+    public RedisTemplate<String, Object> redisTemplate() {
+        RedisTemplate<String, Object> template = new RedisTemplate<String, Object>();
+        template.setConnectionFactory(jedisConnectionFactory());
+        return template;
+    }
+}
+```
+* 配置到sping cloud config
+```java
+package com.thoughtmechanix.licenses.config;
+
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+@Component
+public class ServiceConfig {
+
+    @Value("${example.property}")
+    private String exampleProperty;
+
+    @Value("${redis.server}")
+    private String redisServer="";
+
+    @Value("${redis.port}")
+    private String redisPort="";
+
+    public String getRedisServer(){
+        return redisServer;
+    }
+
+    public Integer getRedisPort(){
+        return new Integer( redisPort ).intValue();
+    }
+
+    public String getExampleProperty() {
+        return exampleProperty;
+    }
+}
+```
+* 定义spring data redis存储库
+```java
+package com.thoughtmechanix.licenses.repository;
+
+import com.thoughtmechanix.licenses.model.Organization;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.HashOperations;
+import org.springframework.data.redis.core.RedisTemplate;
+import org.springframework.stereotype.Repository;
+
+import javax.annotation.PostConstruct;
+
+@Repository
+public class OrganizationRedisRepositoryImpl implements OrganizationRedisRepository {
+    private static final String HASH_NAME ="organization";
+
+    private RedisTemplate<String, Organization> redisTemplate;
+    private HashOperations hashOperations;
+
+    public OrganizationRedisRepositoryImpl(){
+        super();
+    }
+
+    @Autowired
+    private OrganizationRedisRepositoryImpl(RedisTemplate redisTemplate) {
+        this.redisTemplate = redisTemplate;
+    }
+
+    @PostConstruct
+    private void init() {
+        hashOperations = redisTemplate.opsForHash();
+    }
+
+
+    @Override
+    public void saveOrganization(Organization org) {
+        hashOperations.put(HASH_NAME, org.getId(), org);
+    }
+
+    @Override
+    public void updateOrganization(Organization org) {
+        hashOperations.put(HASH_NAME, org.getId(), org);
+    }
+
+    @Override
+    public void deleteOrganization(String organizationId) {
+        hashOperations.delete(HASH_NAME, organizationId);
+    }
+
+    @Override
+    public Organization findOrganization(String organizationId) {
+       return (Organization) hashOperations.get(HASH_NAME, organizationId);
+    }
+}
+```
+```java
+package com.thoughtmechanix.licenses.repository;
+
+import com.thoughtmechanix.licenses.model.Organization;
+
+public interface OrganizationRedisRepository {
+    void saveOrganization(Organization org);
+    void updateOrganization(Organization org);
+    void deleteOrganization(String organizationId);
+    Organization findOrganization(String organizationId);
+}
+```
+* 缓存读取
+```java
+package com.thoughtmechanix.licenses.clients;
+
+import com.thoughtmechanix.licenses.model.Organization;
+import com.thoughtmechanix.licenses.repository.OrganizationRedisRepository;
+import com.thoughtmechanix.licenses.utils.UserContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.oauth2.client.OAuth2RestTemplate;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestTemplate;
+
+@Component
+public class OrganizationRestTemplateClient {
+    // OAuth2RestTemplate为RestTemplate的替代品。可以处理Authorization的传播
+    @Autowired
+    OAuth2RestTemplate restTemplate;
+
+    @Autowired
+    OrganizationRedisRepository orgRedisRepo;
+
+    @Autowired
+    UserContext userContext;
+
+    private static final Logger logger = LoggerFactory.getLogger(OrganizationRestTemplateClient.class);
+
+    private Organization checkRedisCache(String organizationId) {
+        try {
+            return orgRedisRepo.findOrganization(organizationId);
+        }
+        catch (Exception ex){
+            logger.error("Error encountered while trying to retrieve organization {} check Redis Cache.  Exception {}",
+                    organizationId, ex);
+            return null;
+        }
+    }
+
+    private void cacheOrganizationObject(Organization org) {
+        try {
+            orgRedisRepo.saveOrganization(org);
+        }catch (Exception ex){
+            logger.error("Unable to cache organization {} in Redis. Exception {}", org.getId(), ex);
+        }
+    }
+
+    public Organization getOrganization(String organizationId){
+        logger.debug("In Licensing Service.getOrganization: {}", userContext.getCorrelationId());
+
+        Organization org = checkRedisCache(organizationId);
+
+        if (org!=null){
+            logger.debug("I have successfully retrieved an organization {} from the redis cache: {}", organizationId, org);
+            return org;
+        }
+
+        logger.debug("Unable to locate organization from the redis cache: {}.", organizationId);
+
+        // 通过zuul进行路由调用
+        ResponseEntity<Organization> restExchange =
+                restTemplate.exchange(
+                        "http://zuulservice/api/organization/v1/organizations/{organizationId}",
+                        HttpMethod.GET,
+                        null, Organization.class, organizationId);
+
+        /*Save the record from cache*/
+        org = restExchange.getBody();
+
+        if (org!=null) {
+            cacheOrganizationObject(org);
+        }
+
+        return org;
+    }
+}
+```
+* 自定义通道
+```java
+package com.thoughtmechanix.licenses.events;
+
+
+import org.springframework.cloud.stream.annotation.Input;
+import org.springframework.messaging.SubscribableChannel;
+
+public interface CustomChannels {
+    @Input("inboundOrgChanges")
+    SubscribableChannel orgs();
+}
+```
+* 消息处理：收到消息时清除缓存
+```java
+package com.thoughtmechanix.licenses.events.handlers;
+
+import com.thoughtmechanix.licenses.events.CustomChannels;
+import com.thoughtmechanix.licenses.events.models.OrganizationChangeModel;
+import com.thoughtmechanix.licenses.repository.OrganizationRedisRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.cloud.stream.annotation.EnableBinding;
+import org.springframework.cloud.stream.annotation.StreamListener;
+
+
+@EnableBinding(CustomChannels.class)
+public class OrganizationChangeHandler {
+
+    @Autowired
+    private OrganizationRedisRepository organizationRedisRepository;
+
+    private static final Logger logger = LoggerFactory.getLogger(OrganizationChangeHandler.class);
+
+    @StreamListener("inboundOrgChanges")
+    public void loggerSink(OrganizationChangeModel orgChange) {
+        logger.debug("Received a message of type " + orgChange.getType());
+        switch(orgChange.getAction()){
+            case "GET":
+                logger.debug("Received a GET event from the organization service for organization id {}", orgChange.getOrganizationId());
+                break;
+            case "SAVE":
+                logger.debug("Received a SAVE event from the organization service for organization id {}", orgChange.getOrganizationId());
+                break;
+            case "UPDATE":
+                logger.debug("Received a UPDATE event from the organization service for organization id {}", orgChange.getOrganizationId());
+                organizationRedisRepository.deleteOrganization(orgChange.getOrganizationId());
+                break;
+            case "DELETE":
+                logger.debug("Received a DELETE event from the organization service for organization id {}", orgChange.getOrganizationId());
+                organizationRedisRepository.deleteOrganization(orgChange.getOrganizationId());
+                break;
+            default:
+                logger.error("Received an UNKNOWN event from the organization service of type {}", orgChange.getType());
+                break;
+
+        }
+    }
+
+}
+```
+***
+## 七，Spring Cloud Sleuth 和 Zipkin
+* 在服务中添加以下依赖，即可替换之前相关构建所有关联ID的基础设施代码
+```
+<!--Spring Cloud Sleuth dependency-->
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-sleuth</artifactId>
+</dependency>
+```
+* 引入以上依赖，服务便会完成以下的功能：
+   * 检查每个传入的HTTP服务，并确定调用中是否存在Spring Cloud Sleuth跟踪信息。如果存在，则将捕获并提供给服务进行日志记录和处理；
+   * 将Spring Cloud Sleuth跟踪信息添加到Spring MDC，以便微服务创建的每个日志语句都添加到日志中；
+   * 将Spring Cloud Sleuth跟踪信息注入服务发出的每个出战HTTP调用以及Spring消息传递通道的消息中。
+* 日志聚合与Spring Cloud Sleuth
+   * 将所有服务实例的日志实时流到一个集中的聚合点，在聚合点对日志数据进行索引并进行搜索；
+   * 可选用Papertrail平台进行聚合实现以上功能。
+* 使用Zuul将关联ID添加到HTTP响应
+   * 将Spring Cloud Sleuth依赖加入到Zuul服务；
+   * 在Zuul后置过滤器中添加Spring Cloud Sleuth的跟踪ID
+```java
+package com.thoughtmechanix.zuulsvr.filters;
+
+import brave.Tracer;
+import com.netflix.zuul.ZuulFilter;
+import com.netflix.zuul.context.RequestContext;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
+
+@Component
+public class ResponseFilter extends ZuulFilter{
+    private static final int  FILTER_ORDER=1;
+    private static final boolean  SHOULD_FILTER=true;
+    private static final Logger logger = LoggerFactory.getLogger(ResponseFilter.class);
+
+    @Autowired
+    Tracer tracer;
+    
+    @Autowired
+    FilterUtils filterUtils;
+
+    @Override
+    public String filterType() {
+        return FilterUtils.POST_FILTER_TYPE;
+    }
+
+    @Override
+    public int filterOrder() {
+        return FILTER_ORDER;
+    }
+
+    @Override
+    public boolean shouldFilter() {
+        return SHOULD_FILTER;
+    }
+
+    @Override
+    public Object run() {
+        RequestContext ctx = RequestContext.getCurrentContext();
+
+        logger.info("Adding the correlation id to the outbound headers. {}", filterUtils.getCorrelationId());
+        ctx.getResponse().addHeader(FilterUtils.CORRELATION_ID, filterUtils.getCorrelationId());
+
+        // 通过sleuth获取tracerId返回到response中。
+        ctx.getResponse().addHeader("tmx-correlation-id", tracer.currentSpan().context().traceIdString());
+
+        logger.info("Completing outgoing request for {}.", ctx.getRequest().getRequestURI());
+
+        return null;
+    }
+}
+```
+### 使用Open Zipkin进行分布式跟踪
