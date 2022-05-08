@@ -2330,3 +2330,36 @@ public class ResponseFilter extends ZuulFilter{
 }
 ```
 ### 使用Open Zipkin进行分布式跟踪
+* Zipkin是一个分布式跟踪平台,可提供可视化界面，可用于跟踪跨度多个服务调用的事务。建立Spring Cloud Sleuth和Zipkin涉及以下四个操作：
+   * 引入对应依赖到捕获跟踪数据的服务中；
+   * 在每个服务中配置Spring属性以指向收集跟踪数据的Zipkin服务器；
+   * 安装和配置Zipkin服务器以收集数据；
+   * 定义每个客户端所使用的采样策略，便于向Zipkin发送跟踪信息。
+* 在Zuul服务，许可证服务和组织服务中引入对应依赖。
+```
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-starter-sleuth</artifactId>
+</dependency>
+
+<dependency>
+    <groupId>org.springframework.cloud</groupId>
+    <artifactId>spring-cloud-sleuth-zipkin</artifactId>
+</dependency>
+```
+* 配置Zuul服务，许可证服务和组织服务指向Zipkin服务器。
+```
+spring:
+  zipkin:
+    baseUrl: localhost:9411
+```
+* 安装和配置Zipkin服务器
+```
+/*
+ * pringboot 在2.0后就不推荐创建springboot项目启动zipkin server了,推荐自己搭建zipkin server【可直接运行官方jar包】
+ * 因为你会发现spring boot 2.0 之后，你在引入依赖时必须要指定zipkin-server的版本号，而自己指定版本号会出现非常多的问题
+ */
+```
+* 发生服务调用后，访问http://localhost:9411,查看Zipkin已经捕获的跟踪结果。
+* 可添加自定义跨度，例如可添加跨度跟踪Redis和数据库查询相关的附加跟踪和计时信息。
+
