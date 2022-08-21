@@ -32,4 +32,38 @@
    * 隐式的bean发现机制和自动装配（推荐）：
        * 组件扫描 —— @ComponentScan注解或者xml配置启动扫描（@Component注解命名bean/@Name-用得少）。
        * 自动装配 —— Spring自动满足bean之间的依赖（@Autowired - 可用于属性/构造器上进行装配）。
+* 配置profile bean
+   * Spring为环境相关的bean等运行时根据激活的profile再确定，使用@Profile注解可以指定某个bean属于哪一个profile。
+   * 激活profile
+      * 依赖spring.profiles.active和spring.profiles.default来确定哪个profile处于激活状态（可通过多种方式设置）；
+         * 使用DispatcherServlet设置到web.xml中；
+         * 使用@ActiveProfiles注解在单元测试中激活指定profiles。
+* 条件化的bean 
+   * 使用@Conditional注解，通过实现了Condition接口的matches方法，该方法返回true则创建该bean，为false则不创建；
+* 处理自动装配的歧义性
+   * 通过@Primary注解标明首选bean；
+   * 通过@Qualifier注解限定自动装配的bean - 组合@Autowired或者Component使用（通过声明自定义的限定符注解，可以同时使用多个限定符）。
+* bean的作用域
+   * Spring的作用域包括： 
+      * 单例（Singleton）：在整个应用中，只创建bean的一个实例；
+      * 原型（Prototype）: 每次注入或者通过Spring应用上下文获取的时候，都会创建一个新的bean实例；
+      * 会话（Session）：在web应用中，为每个会话创建一个bean实例；
+      * 请求（Request）：在web应用中，为每个请求创建一个bean实例。
+   * 单例是默认的作用域，可通过@Scope注解选择其他作用域，其可与@Component和@Bean一起使用；
+   * 使用会话和请求作用域：
+      * 场景举例：单例（购物车），所有用户就都能共享这个购物车；原型（购物车），在应用中的一个地方创建了，另一个地方就看不到了；会话（购物车），与给定的用户相关联。
+      * 会话作用域和请求作用域bean的依赖注入都是以作用域代理的方式进行注入的。
+* 运行时值注入
+   * 注入外部的值
+      * 通过@PropertySource注解引用外部文件（文件会加载到Environment中）；
+      * 通过注入的Environment，获取文件中的属性。
+      * Spring装配中可使用占位符"${...}",可配合@Value注解使用。
+   * 使用Spring表达式语言进行装配
+      * spEL表达式可做较复杂运算，其中可引用java类型与bean进入计算...
+      * spEL表达式要放到"#{...}"中，也可配合@Value注解使用；
+### 面向切面的Spring —— AOP
+* 
+***
+
+
 
