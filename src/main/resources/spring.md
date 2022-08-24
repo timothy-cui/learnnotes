@@ -62,8 +62,59 @@
       * spEL表达式可做较复杂运算，其中可引用java类型与bean进入计算...
       * spEL表达式要放到"#{...}"中，也可配合@Value注解使用；
 ### 面向切面的Spring —— AOP
-* 
+* 在使用切面编程时，我们仍然可以在一个地方定义通用功能，但是可以通过声明的方式定义这个功能要以何种方式在何处应用，而无需修改受影响的类。
+* AOP术语：
+   * 通知（Advice）：前置通知；后置通知；返回通知；异常通知；环绕通知。
+   * 连接点（join point）：在应用执行过程中**能够**插入切面的一个点。
+   * 切点（pointcut）：匹配通知所要织入的一个或多个连接点；
+   * 切面（Aspect）：通知和切点的结合；
+   * 引入（introduction）：允许向现有的类添加新方法或属性；
+   * 织入（weaving）：把切面应用到目标对象并创建新的代理对象的过程。
+* Spring提供的四种类型的AOP支持（基于动态代理，局限于方法拦截）：
+   * 基于代理的经典SpringAOP；
+   * 纯POJO切面；
+   * @AspectJ注解驱动的切面（推荐）；
+   * 注入式AspectJ切面。
+* 编写切点：
+   * execution()指示器选择目标方法（连接点）作为切点；
+   * within()指示器限制匹配切点所在包；
+   * bean()指示器可使用beanID或者bean名称作为参数来限制切点只匹配特定的bean。
+   * args()指示器限制连接点匹配参数为指定类型的方法，且同时可传递且切点参数到在通知中使用。
+* 使用注解创建切面：
+   * @Aspect注解标识切面pojo；
+   * @After("切点表达式")注解，通知在切点方法返回或者抛出异常后调用；
+   * @AfterReturning("切点表达式")注解，通知在切点方法返回后调用；
+   * @AfterThrowing("切点表达式")注解，通知在切点方法抛出异常后调用；
+   * @Around("切点表达式")注解，通知会将切点方法封装起来；
+   * @Before("切点表达式")注解，通知会在切点方法调用之前执行；
+   * @Pointcut("切点表达式")注解，在@Aspect切面定义内定义可重用的切点。
+* 使用javaConfig配置：
+   * @EnableAspectJAutoProxy注解启用AspectJ自动代理；
+   * 将切面类配置为bean
+```java
+import javax.management.MXBean;
+
+@Configuration
+@EnableAspectJAutoProxy
+@ComponentScan
+public class ConcertConfig {
+
+    @Bean
+    public Audience audience() {
+        // Audience 为使用@Aspect的切面类。
+        return new Audience();
+    }
+}
+```
+* 创建环绕通知：
+   * 环绕通知方法接受ProceedingJoinPoint作为参数，通过调用其proceed方法，触发且切点方法。
+   * 不调用proceed方法，会阻塞切点方法；调用多次proceed方法，会多次触发切点方法。
+* 通过注解引入新功能：
+   * 可通过切面@Aspect和@DeclareParents注解为目标类引入新的接口（功能），不用修改目标类。
+* 对于没有源码无法使用AspectJ注解的情形，可使用xml的方式声明切面（此处不做赘述）。
+* 若SpringAOP切面无法满足功能需求，可考虑注入AspectJ切面。其功能更强大（具体此处不做赘述）。
 ***
+## 二，Spring在Web中的应用——SpringMVC、Spring Web Flow与Spring Security；
 
 
 
