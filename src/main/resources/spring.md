@@ -115,6 +115,17 @@ public class ConcertConfig {
 * 若SpringAOP切面无法满足功能需求，可考虑注入AspectJ切面。其功能更强大（具体此处不做赘述）。
 ***
 ## 二，Spring在Web中的应用——SpringMVC、Spring Web Flow与Spring Security；
-
+### SpringMVC
+* 基于模型-视图-控制器（MVC）模式实现。
+* 跟踪SpringMVC请求：
+   * 前端控制器（DispatcherServlet）：请求的第一站，单例的Servlet将请求委托给应用程序的其他组件来实际处理；
+   * 处理器映射：请求的第二站，DispatcherServlet会来查询，并根据请求所携带的url信息进行决策；
+   * 控制器：请求的第三站，通过处理器映射找到对应的controller后，DispatcherServlet会将请求发送过去；
+   * 模型及逻辑视图名：请求的第四站，控制器处理完毕后将模型和逻辑视图名打包发给DispatcherServlet；
+   * 视图解析器：请求的第五站，DispatcherServlet根据逻辑视图名到视图解析器获取视图；
+   * 视图：请求的第六站，视图渲染数据后输出。
+* 搭建SpringMVC简析：
+   * 配置DispatcherServlet（一般配置在web.xml，也可以通过javaConfig配置）
+   * 
 
 
