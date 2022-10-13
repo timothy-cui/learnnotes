@@ -126,7 +126,7 @@ public class ConcertConfig {
    * 视图：请求的第六站，视图渲染数据后输出。
 * 搭建SpringMVC简析：
    * 配置DispatcherServlet（一般配置在web.xml，也可以通过javaConfig配置）；
-   * 两个上下文：spring上下文1（DispatcherServlet启动时创建，加载包含web组件的bean）；spring上下文1（DispatcherServlet启动时创建，加载驱动后端程序与数据库中间层的bean）- Servlet3.0可通过AbstractAnnotationConfigDispatcherServletInitializer同时配置创建。
+   * 两个上下文：spring上下文1（DispatcherServlet启动时创建，加载包含web组件的bean）；spring上下文2（ContextLoaderListener，加载驱动后端程序与数据库中间层的bean）- Servlet3.0可通过AbstractAnnotationConfigDispatcherServletInitializer同时配置创建。
    * 启用SpringMvc：基于@EnableWebMvc注解搭建配置类；
 * 编写控制器：
    * @Controller注解辅助实现控制器组件扫描；
@@ -208,7 +208,7 @@ public class SpittlerController {
     }
     
     @RequestMapping(value = "/spittleId", method = RequestMethod.GET)
-    public String spittle(@PathVariable("spittleId") long spittleId) {
+    public String spittle(@PathVariable("spittleId") long spittleId, Model model) {
         // 不指定key时，会根据对象类型推断为"spittle"
         model.addAttribute(spittlerRepository.findOne(spittleId));
         return "spittle";
@@ -265,9 +265,98 @@ public class SpittlerController {
 }
 ```
 * 渲染Web视图
-  * JSP视图、Apache Tiles视图、Thymeleaf视图；
-  * 根据不同的视图实现配置不同的视图解析器（JSP使用InternalResourceViewResolver，Thymeleaf使用ThymeleafViewResolver）；
-  * 使用对应的标签库对模型数据与视图进行绑定。
+   * JSP视图、Apache Tiles视图、Thymeleaf视图；
+   * 根据不同的视图实现配置不同的视图解析器（JSP使用InternalResourceViewResolver，Thymeleaf使用ThymeleafViewResolver）；
+   * 使用对应的标签库对模型数据与视图进行绑定。
+* 关于SpringMVC的一些高级技术说明
+   * SpringMVC的配置方案：
+      * Servlet3.0可通过WebApplicationInitializer配置除DispatcherServlet和ContextLoaderListener外的Servlet和Listener；
+      * Servlet3.0可通过AbstractAnnotationConfigDispatcherServletInitializer的customizeRegistration方法对DispatcherServlet进行额外配置；
+      * 对于不支持Servlet3.0的容器可使用web.xml进行以上相应配置。
+   * 处理multipart形式的数据（上传文件）：
+      * 配置multipart解析器
+         * StandardServletMultipartResolver（依赖Servlet3.0）：声明bean，并在配置DispatcherServlet时通过重载customizeRegistration方法配置multipart的细节（包括文件上传路径、大小限制等）；
+         * CommonsMultiMultipartResolver（Spring内置）：可以不显示指定文件上传目录（默认为servelet的临时目录），在声明bean时就可以配置multipart的细节（包括文件上传路径、大小限制等）。
+      * 处理multipart请求
+         * 在表单中标识属性，告诉浏览器以multipart数据的形式来提交表单；
+         * 将控制器的输入添加一个参数（可以为byte数组；也可以为Spring提供的MultipartFile接口，其功能更强大），并为其添加@RequestPart注解；
+         * 对于文件的管理，可以将文件保存到Amazon S3中；
+         * 在Serclet3.0中，也可以以javax.servlet.http.Part作为控制器方法的参数，代替MultipartFile。
+```
+@RequestMapping(value = "/register", method = RequestMethod.POST)
+public String processRegistration(
+                 @RequestPart("profilePicture") byte[] profilePicture,
+                 @Valid Spitter spitter,
+                 Errors errors) {
+   ···
+}
+```
 * 
+   * 
+      * 处理异常
+         * Spring提供了多种方式将异常转换为响应（Servlet请求的输出都是一个Servlet响应）：
+            * 特定的Spring异常将会自动映射为指定的HTTP状态码(一些异常会默认映射为HTTP状态码)；
+            * 异常上可以添加@ResponseStatus注解，从而将其映射为某一个HTTP状态码；
+            * 在方法上可以添加@ExceptionHandler注解，使其用来处理异常。
+```
+// 将异常自动映射为HTTP状态码；
+@RequestMapping(value = "/spittleId", method = RequestMethod.GET)
+public String spittle(@PathVariable("spittleId") long spittleId, Model model) {
+    Spittle spittle = spittlerRepository.findOne(spittleId);
+    if (spittle == null) {
+        throw new SpittleNotFoundException();
+    }
+    model.addAttribute(spittle);
+    return "spittle";
+}
 
+@ResponseStatus(value = HttpStatus.NOT_FOUND, reason = "Spitte Not Found")
+public class SpittleNotFoundException extends RuntimeException{}
 
+// 将同一个控制器中相同的异常处理代码提取，编写成一个异常处理的方法.@ExceptionHandler注解，当抛出DuplicateSpittleException异常时委托该方法处理，该方法返回参数与控制器方法返回参数类型相同。
+@ExceptionHandler(DuplicateSpittleException.class)
+public String handleDuplicateSpittle(){
+    return "error/duplicate";
+}
+```
+*
+    *
+        * 为控制器添加通知
+```
+// 为所有控制器定义一个异常处理方法，使用@ControllerAdvie注解的类，则这个类里包含@ExceptionHandler、@InitBinder、@ModelAttribute修饰的方法都会应用到控制器中带有@RequestMapping注解的方法上。
+@ControllerAdvice
+public class AppWideExceptionHandler {
+    @ExceptionHandler(DuplicateSpittleException.class)
+    public String handleDuplicateSpittle(){
+        return "error/duplicate";
+    }
+}
+```
+*
+    *
+        * 跨重定向请求传递数据
+```
+// 使用URL模版进行数据传递
+return "redirect:/spitter/{username}"
+
+// 使用flash属性发送数据(Spring提供了RedirectAttributes设置flash属性，其提供了Model的所有功能，数据通过会话进行传递)
+@RequestMapping(value = "/register", method = RequestMethod.POST)
+public String processRegistration(
+                 Spitter spitter,
+                 RedirectAttributes model) {
+   spitterRepository.save(spitter);
+   model.addAttribute("username", spitter.getUsername());
+   model.addFlashAttribute("spitter", spitter);
+   return "redirect:/spitter/{username}"
+}
+
+@RequestMapping(value = "/{username}", method = RequestMethod.POST)
+public String processRegistration(
+                 @PathVariable String username,
+                 Model model) {
+   if (!model.containsAttribute("spitter")) {
+        model.addAttribute(spitterRepository.findByUsername(username));
+   }
+   return "profile"
+}
+```
