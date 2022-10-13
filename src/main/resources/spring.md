@@ -125,7 +125,149 @@ public class ConcertConfig {
    * 视图解析器：请求的第五站，DispatcherServlet根据逻辑视图名到视图解析器获取视图；
    * 视图：请求的第六站，视图渲染数据后输出。
 * 搭建SpringMVC简析：
-   * 配置DispatcherServlet（一般配置在web.xml，也可以通过javaConfig配置）
-   * 
+   * 配置DispatcherServlet（一般配置在web.xml，也可以通过javaConfig配置）；
+   * 两个上下文：spring上下文1（DispatcherServlet启动时创建，加载包含web组件的bean）；spring上下文1（DispatcherServlet启动时创建，加载驱动后端程序与数据库中间层的bean）- Servlet3.0可通过AbstractAnnotationConfigDispatcherServletInitializer同时配置创建。
+   * 启用SpringMvc：基于@EnableWebMvc注解搭建配置类；
+* 编写控制器：
+   * @Controller注解辅助实现控制器组件扫描；
+   * 基于@RequestMapping注解实现请求方法的route和处理的请求类型（该注解可用于类上，定义该类中所有方法的基本route），@RequestMapping(value = "/", method = GET)。
+   * 传递模型数据到视图中：
+```java
+@Controller
+@RequestMapping("/spittles")
+public class SpittlerController {
+    private SpittlerRepository spittlerRepository;
+    
+    @Autowired
+    public SpittlerController(SpittlerRepository spittlerRepository) {
+        this.spittlerRepository = spittlerRepository;
+    }
+    
+    // 方式1(Model实际是一个key-value集合，会传递到视图"spittles")
+    @RequestMapping(method = RequestMethod.GET)
+    public String spittles(Model model) {
+        // 不指定key时，会根据对象类型推断为"spittleList"
+        model.addAttribute(spittlerRepository.findSpittles(Long.MAX_VALUE, 20));
+        return "spittles";
+    }
+
+    // 方式2(可以使用Map来代替Model)
+    @RequestMapping(method = RequestMethod.GET)
+    public String spittles(Map model) {
+        model.addAttribute("spittleList", spittlerRepository.findSpittles(Long.MAX_VALUE, 20));
+        return "spittles";
+    }
+
+    // 方式3（返回值会被放入模型中并传递到逻辑视图，key被推断为"spittleList"，逻辑视图名会根据请求路径推断为"spittles"）
+    @RequestMapping(method = RequestMethod.GET)
+    public List<Spittle> spittles() {
+        return spittlerRepository.findSpittles(Long.MAX_VALUE, 20);
+    }
+}
+```
+* 接受请求的输入：
+  * 处理查询参数(/spittles?max=238900&count=20):@RequestParam
+```java
+@Controller
+@RequestMapping("/spittles")
+public class SpittlerController {
+    private static final String MAX_LONG_AS_STRING = Long.toString(Long.MAX_VALUE);
+    private SpittlerRepository spittlerRepository;
+
+    @Autowired
+    public SpittlerController(SpittlerRepository spittlerRepository) {
+        this.spittlerRepository = spittlerRepository;
+    }
+    
+    @RequestMapping(method = RequestMethod.GET)
+    public List<Spittle> spittles(@RequestParam("max") long max, 
+                                  @RequestParam("count") long count) {
+        return spittlerRepository.findSpittles(max, count);
+    }
+
+    // 加默认值(defaultValue属性为String，进行绑定时会自动转换为Long)
+    @RequestMapping(method = RequestMethod.GET)
+    public List<Spittle>  spittles(@RequestParam(value = "max", defaultValue = MAX_LONG_AS_STRING) long max,
+                                   @RequestParam(value = "count", defaultValue = "20") long count) {
+        return spittlerRepository.findSpittles(max, count);
+    }
+}
+```
+*  
+  * 通过路径参数接受输入(/spittle/12345):@PathVariable
+```java
+@Controller
+@RequestMapping("/spittles")
+public class SpittlerController {
+    private static final String MAX_LONG_AS_STRING = Long.toString(Long.MAX_VALUE);
+    private SpittlerRepository spittlerRepository;
+
+    @Autowired
+    public SpittlerController(SpittlerRepository spittlerRepository) {
+        this.spittlerRepository = spittlerRepository;
+    }
+    
+    @RequestMapping(value = "/spittleId", method = RequestMethod.GET)
+    public String spittle(@PathVariable("spittleId") long spittleId) {
+        // 不指定key时，会根据对象类型推断为"spittle"
+        model.addAttribute(spittlerRepository.findOne(spittleId));
+        return "spittle";
+    }
+}
+```
+* 
+   * 处理表单
+```java
+@Controller
+@RequestMapping("/spittles")
+public class SpittlerController {
+    private static final String MAX_LONG_AS_STRING = Long.toString(Long.MAX_VALUE);
+    private SpittlerRepository spittlerRepository;
+
+    @Autowired
+    public SpittlerController(SpittlerRepository spittlerRepository) {
+        this.spittlerRepository = spittlerRepository;
+    }
+    
+    // "redirect:"会被解析为重定向的规则。
+    @RequestMapping(value = "/register", method = RequestMethod.POST)
+    public String processRegistration(Spitter spitter) {
+        spittlerRepository.save(spitter);
+        return "redirect:/spitter/" + spitter.getUserName();
+    }
+}
+```
+* 
+   * 校验表单：entity中使用java校验API的注解对元素进行注解（如@NotNull、@Max、@Min）；使用@Valid注解controller方法参数告诉Spring，需要确保这个参数满足校验限制（方法依然会被调用，但是会出现校验错误，需要程序处理）。
+```java
+@Controller
+@RequestMapping("/spittles")
+public class SpittlerController {
+    private static final String MAX_LONG_AS_STRING = Long.toString(Long.MAX_VALUE);
+    private SpittlerRepository spittlerRepository;
+
+    @Autowired
+    public SpittlerController(SpittlerRepository spittlerRepository) {
+        this.spittlerRepository = spittlerRepository;
+    }
+    
+    // "redirect:"会被解析为重定向的规则。
+    @RequestMapping(value = "/register", method = RequestMethod.POST)
+    public String processRegistration(@Valid Spitter spitter, Errors errors) {
+        // 如果校验出现错误，则重新返回表单。
+        if (errors.hasErrors()) {
+            return "registerFrom";
+        }
+        
+        spittlerRepository.save(spitter);
+        return "redirect:/spitter/" + spitter.getUserName();
+    }
+}
+```
+* 渲染Web视图
+  * JSP视图、Apache Tiles视图、Thymeleaf视图；
+  * 根据不同的视图实现配置不同的视图解析器（JSP使用InternalResourceViewResolver，Thymeleaf使用ThymeleafViewResolver）；
+  * 使用对应的标签库对模型数据与视图进行绑定。
+* 
 
 
