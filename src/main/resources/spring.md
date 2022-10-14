@@ -360,3 +360,36 @@ public String processRegistration(
    return "profile"
 }
 ```
+### Spring Web Flow
+* 是一个web框架，适用于元素按照规定流程运行的成勋，是Spring MVC的扩展，支持基于流程的应用程序。
+* 在Spring中配置Web Flow
+   * 暂不支持在java中配置，只能在xml中进行配置；
+   * 装配流程执行器->配置流程注册表->处理流程请求
+```xml
+<!-- 装配流程执行器 -->
+<flow:flow-executor id = "flowExecutor" />
+
+<!-- 配置流程注册表，负责创建和执行流程 -->
+<flow:flow-registor id = "flowRegistor">
+   <flow:flow-location id = "pizza" path = "/WEB-INF/flows/springpizza.xml" />
+</flow:flow-registor>
+
+<!-- 处理流程请求，负责加载流程定义 -->
+<!-- FlowHandlerMapping装配注册表的引用，其会帮助DispatcherServlet将请求的url匹配到流程上（/pizza）-->
+<bean class = "org.springframework.webflow.mvc.servlet.FlowHandlerMapping">
+    <property name = "flowRegistor" ref = "flowRegistor" /> 
+</bean>
+<!-- FlowHandlerMapping仅仅是将请求定向到Spring Web Flow，FlowHandlerAdapter会负责响应 -->
+<bean class = "org.springframework.webflow.mvc.servlet.FlowHandlerAdapter">
+<property name = "flowExecutor" ref = "flowExecutor" />
+</bean>
+```
+* 流程的组件
+   * 流程主要由三个主要元素定义：状态（流程中事件发生的地点）、转移（连接这些地点的公路）、流程数据。
+   * 状态包括：行为、决策、结束、子流程、视图（一般为JSP）；
+   * 转移：除了结束状态以外，每个状态至少要有一个转移；
+   * 流程数据：在流程中进行传递的数据。
+* Spring Web Flow能够构建会话式应用程序（对用户进行指引、询问适当的问题并基于他们的响应将其引导到特定的页面），可以与Spring Security结合，保护对视图的访问。
+### Spring Security
+
+
